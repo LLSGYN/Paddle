@@ -32,7 +32,10 @@ from paddle.utils.decorator_utils import (
 
 from ..base.data_feeder import check_type, check_variable_and_dtype
 from ..common_ops_import import Variable
-from ..framework import LayerHelper, core
+from ..framework import (
+    LayerHelper,
+    core,
+)
 from .math import _get_reduce_axis_with_tensor
 
 if TYPE_CHECKING:

@@ -340,6 +340,179 @@ class TestMultinomialApi(unittest.TestCase):
         )
 
 
+class TestMultinomialOutParameter(unittest.TestCase):
+    def setUp(self):
+        paddle.disable_static()
+        paddle.seed(100)
+
+    def tearDown(self):
+        paddle.enable_static()
+
+    def test_out_parameter_basic(self):
+        """测试基本的 out 参数功能"""
+        x_numpy = np.random.rand(4)
+        x = paddle.to_tensor(x_numpy)
+
+        # 创建输出tensor
+        out = paddle.empty([1000], dtype='int64')
+
+        # 使用 out 参数
+        paddle.multinomial(x, num_samples=1000, replacement=True, out=out)
+
+        # 验证结果
+        self.assertEqual(out.shape, [1000])
+        self.assertEqual(out.dtype, paddle.int64)
+
+        # 验证结果在有效范围内
+        self.assertTrue(paddle.all(out >= 0))
+        self.assertTrue(paddle.all(out < 4))
+
+    def test_out_parameter_2d(self):
+        """测试2D输入时的 out 参数功能"""
+        x_numpy = np.random.rand(3, 4)
+        x = paddle.to_tensor(x_numpy)
+
+        # 创建输出tensor
+        out = paddle.empty([3, 100], dtype='int64')
+
+        # 使用 out 参数
+        paddle.multinomial(x, num_samples=100, replacement=True, out=out)
+
+        # 验证结果
+        self.assertEqual(out.shape, [3, 100])
+        self.assertEqual(out.dtype, paddle.int64)
+
+        # 验证结果在有效范围内
+        self.assertTrue(paddle.all(out >= 0))
+        self.assertTrue(paddle.all(out < 4))
+
+    def test_out_parameter_with_alias(self):
+        """测试 out 参数与 alias 装饰器的组合使用"""
+        x_numpy = np.random.rand(4)
+        x = paddle.to_tensor(x_numpy)
+
+        # 创建输出tensor
+        out = paddle.empty([1000], dtype='int64')
+
+        # 使用 input alias 和 out 参数
+        paddle.multinomial(input=x, num_samples=1000, replacement=True, out=out)
+
+        # 验证结果
+        self.assertEqual(out.shape, [1000])
+        self.assertEqual(out.dtype, paddle.int64)
+
+    def test_out_parameter_different_scenarios(self):
+        """测试不同场景下的 out 参数功能"""
+        # 场景1：replacement=False
+        x_numpy = np.random.rand(100)
+        x = paddle.to_tensor(x_numpy)
+        out = paddle.empty([50], dtype='int64')
+
+        paddle.multinomial(x, num_samples=50, replacement=False, out=out)
+
+        # 验证不重复采样
+        unique_values = paddle.unique(out)
+        self.assertEqual(len(unique_values), 50)
+
+        # 场景2：小样本数
+        out_small = paddle.empty([5], dtype='int64')
+        paddle.multinomial(x, num_samples=5, replacement=True, out=out_small)
+        self.assertEqual(out_small.shape, [5])
+
+    def test_out_parameter_none_default(self):
+        """测试 out=None 时的默认行为"""
+        x_numpy = np.random.rand(4)
+        x = paddle.to_tensor(x_numpy)
+
+        # out=None 应该等同于不传 out 参数
+        result1 = paddle.multinomial(
+            x, num_samples=100, replacement=True, out=None
+        )
+        result2 = paddle.multinomial(x, num_samples=100, replacement=True)
+
+        # 两者应该有相同的形状和类型（但内容可能不同due to randomness）
+        self.assertEqual(result1.shape, result2.shape)
+        self.assertEqual(result1.dtype, result2.dtype)
+
+
+# 新增：综合测试 alias 和 out 参数的组合
+class TestMultinomialOutAndAliasDecorator(unittest.TestCase):
+    def setUp(self):
+        # 禁用PaddlePaddle的静态图模式
+        paddle.disable_static()
+
+    def tearDown(self):
+        paddle.enable_static()
+
+    def do_test(self, test_type):
+        """
+        执行不同类型的测试
+        test_type: "raw", "alias", "out", "out_alias"
+        """
+        x_numpy = np.random.rand(4)
+        x = paddle.to_tensor(x_numpy, stop_gradient=False)
+
+        if test_type == "raw":
+            # 标准调用
+            result = paddle.multinomial(x, num_samples=1000, replacement=True)
+            loss = paddle.cast(result, 'float32').mean()
+            loss.backward()
+            return result, x.grad
+
+        elif test_type == "alias":
+            # 使用 alias 参数名
+            result = paddle.multinomial(
+                input=x, num_samples=1000, replacement=True
+            )
+            loss = paddle.cast(result, 'float32').mean()
+            loss.backward()
+            return result, x.grad
+
+        elif test_type == "out":
+            # 使用 out 参数
+            out = paddle.empty([1000], dtype='int64')
+            out.stop_gradient = False
+            paddle.multinomial(x, num_samples=1000, replacement=True, out=out)
+            loss = paddle.cast(out, 'float32').mean()
+            loss.backward()
+            return out, x.grad
+
+        elif test_type == "out_alias":
+            # 使用 out 参数和 alias
+            out = paddle.empty([1000], dtype='int64')
+            out.stop_gradient = False
+            paddle.multinomial(
+                input=x, num_samples=1000, replacement=True, out=out
+            )
+            loss = paddle.cast(out, 'float32').mean()
+            loss.backward()
+            return out, x.grad
+
+        else:
+            raise ValueError(f"Unknown test type: {test_type}")
+
+    def test_multinomial_out_and_alias_combination(self):
+        """测试 out 参数和 alias 装饰器的组合使用"""
+        test_types = ["raw", "alias", "out", "out_alias"]
+
+        results = {}
+        grads = {}
+
+        for test_type in test_types:
+            paddle.seed(42)  # 设置相同随机种子
+            result, grad = self.do_test(test_type)
+            results[test_type] = result
+            grads[test_type] = grad
+
+        # 验证所有结果的形状和类型一致
+        base_shape = results["raw"].shape
+        base_dtype = results["raw"].dtype
+
+        for test_type in test_types:
+            self.assertEqual(results[test_type].shape, base_shape)
+            self.assertEqual(results[test_type].dtype, base_dtype)
+
+
 class TestMultinomialAlias(unittest.TestCase):
     def test_alias(self):
         paddle.disable_static()

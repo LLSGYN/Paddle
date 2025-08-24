@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from paddle import Tensor
+    from paddle._typing import DTypeLike
 
     _POrder: TypeAlias = Literal['fro', 'nuc']
 
@@ -501,6 +502,9 @@ def vector_norm(
     axis: int | Sequence[int] | None = None,
     keepdim: bool = False,
     name: str | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    out: Tensor | None = None,
 ) -> Tensor:
     """
     Calculate the p-order vector norm for certain  dimension of Tensor `input`.
@@ -553,28 +557,44 @@ def vector_norm(
     """
 
     def zero_norm(
-        input, porder=None, axis=axis, keepdim=False, asvector=False, name=None
+        input,
+        porder=None,
+        axis=axis,
+        keepdim=False,
+        asvector=False,
+        name=None,
+        out_tensor=None,
     ):
-        return paddle.count_nonzero(
+        result = paddle.count_nonzero(
             input, axis=axis, keepdim=keepdim, name=name
         ).astype(input.dtype)
+        if out_tensor is not None:
+            paddle.assign(result, output=out_tensor)
+            return out_tensor
+        return result
 
     def inf_norm(
-        input, porder=None, axis=axis, keepdim=False, asvector=False, name=None
+        input,
+        porder=None,
+        axis=axis,
+        keepdim=False,
+        asvector=False,
+        name=None,
+        out_tensor=None,
     ):
         if in_dynamic_or_pir_mode():
-            out = _C_ops.abs(input)
+            abs_out = _C_ops.abs(input)
             if porder == np.float64('inf'):
-                return _C_ops.max(out, axis, keepdim)
+                return _C_ops.max(abs_out, axis, keepdim, out=out_tensor)
             else:
-                return _C_ops.min(out, axis, keepdim)
+                return _C_ops.min(abs_out, axis, keepdim, out=out_tensor)
         else:
             helper = LayerHelper('inf_norm', **locals())
-            out = helper.create_variable_for_type_inference(
+            abs_out = helper.create_variable_for_type_inference(
                 dtype=helper.input_dtype()
             )
             helper.append_op(
-                type='abs', inputs={'X': input}, outputs={'Out': out}
+                type='abs', inputs={'X': input}, outputs={'Out': abs_out}
             )
             reduce_out = helper.create_variable_for_type_inference(
                 dtype=helper.input_dtype()
@@ -585,7 +605,7 @@ def vector_norm(
             )
             helper.append_op(
                 type=reduce_type,
-                inputs={'X': out},
+                inputs={'X': abs_out},
                 outputs={'Out': reduce_out},
                 attrs={
                     'dim': axis,
@@ -597,7 +617,13 @@ def vector_norm(
             return reduce_out
 
     def vector_norm_axis_tuple(
-        input, porder=2, axis=None, keepdim=False, asvector=False, name=None
+        input,
+        porder=2,
+        axis=None,
+        keepdim=False,
+        asvector=False,
+        name=None,
+        out_tensor=None,
     ):
         """
         NOTE:
@@ -607,8 +633,7 @@ def vector_norm(
             abs_out = _C_ops.abs(input)
             pow_out = _C_ops.pow(abs_out, porder)
             sum_out = _C_ops.sum(pow_out, axis, None, keepdim)
-            out = _C_ops.pow(sum_out, float(1.0 / porder))
-            return out
+            return _C_ops.pow(sum_out, float(1.0 / porder), out=out_tensor)
 
         block = LayerHelper('norm', **locals())
         out = block.create_variable_for_type_inference(
@@ -653,7 +678,13 @@ def vector_norm(
         return out
 
     def vector_norm_axis_int(
-        input, porder=2, axis=None, keepdim=False, asvector=False, name=None
+        input,
+        porder=2,
+        axis=None,
+        keepdim=False,
+        asvector=False,
+        name=None,
+        out_tensor=None,
     ):
         """
         NOTE:
@@ -662,7 +693,9 @@ def vector_norm(
         if in_dynamic_or_pir_mode():
             if axis is None:
                 axis = -1
-            return _C_ops.p_norm(input, porder, axis, 1e-12, keepdim, asvector)
+            return _C_ops.p_norm(
+                input, porder, axis, 1e-12, keepdim, asvector, out=out_tensor
+            )
         else:
             if porder is not None:
                 check_type(porder, 'porder', (float, int), 'p_norm')
@@ -722,21 +755,37 @@ def vector_norm(
             keepdim=keepdim,
             asvector=asvector,
             name=name,
+            out_tensor=out,
         )
 
     # when len(axis) >= 1, calculate by combining other Python apis
     elif isinstance(axis, list):
         if p == np.inf or p == -np.inf:
             return inf_norm(
-                abs_x, porder=p, axis=axis, keepdim=keepdim, name=name
+                abs_x,
+                porder=p,
+                axis=axis,
+                keepdim=keepdim,
+                name=name,
+                out_tensor=out,
             )
         elif p == 0:
             return zero_norm(
-                abs_x, porder=p, axis=axis, keepdim=keepdim, name=name
+                abs_x,
+                porder=p,
+                axis=axis,
+                keepdim=keepdim,
+                name=name,
+                out_tensor=out,
             )
         else:
             return vector_norm_axis_tuple(
-                abs_x, porder=p, axis=axis, keepdim=keepdim, name=name
+                abs_x,
+                porder=p,
+                axis=axis,
+                keepdim=keepdim,
+                name=name,
+                out_tensor=out,
             )
 
 
@@ -746,6 +795,9 @@ def matrix_norm(
     axis: int | list[int] | tuple[int, int] = [-2, -1],
     keepdim: bool = False,
     name: str | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    out: Tensor | None = None,
 ) -> Tensor:
     """
     Calculate the p-order matrix norm for certain  dimension of Tensor `input`.
@@ -825,6 +877,7 @@ def matrix_norm(
         dim: list[int] | None = None,
         keepdim: bool = False,
         name: str | None = None,
+        out_tensor: Tensor | None = None,
     ) -> Tensor:
         """
         The frobenius norm OP is to calculate the frobenius norm of certain two dimensions of Tensor `input`.
@@ -842,8 +895,12 @@ def matrix_norm(
 
         if in_dynamic_or_pir_mode():
             if dim is None:
-                return _C_ops.frobenius_norm(input, [], keepdim, True)
-            return _C_ops.frobenius_norm(input, dim, keepdim, False)
+                return _C_ops.frobenius_norm(
+                    input, [], keepdim, True, out=out_tensor
+                )
+            return _C_ops.frobenius_norm(
+                input, dim, keepdim, False, out=out_tensor
+            )
         else:
             attrs = {'dim': dim, 'keep_dim': keepdim, 'reduce_all': False}
             if dim is None:
@@ -870,6 +927,7 @@ def matrix_norm(
         axis: int | list[int] | tuple[int, int] = axis,
         keepdim: bool = False,
         name: str | None = None,
+        out_tensor: Tensor | None = None,
     ) -> Tensor:
         """
         The nuclear norm OP is to calculate the nuclear norm of certain two dimensions of Tensor `input`.
@@ -887,10 +945,10 @@ def matrix_norm(
         if in_dynamic_or_pir_mode():
             transposed = _C_ops.transpose(input, perm)
             u, s, vh = _C_ops.svd(transposed, False)
-            result = _C_ops.sum(s, -1, None, keepdim)
+            result = _C_ops.sum(s, -1, None, keepdim, out=out_tensor)
             if keepdim:
                 result = _C_ops.transpose(
-                    _C_ops.unsqueeze(result, -1), inv_perm
+                    _C_ops.unsqueeze(result, -1), inv_perm, out=out_tensor
                 )
             return result
 
@@ -968,6 +1026,7 @@ def matrix_norm(
         axis: int | list[int] | tuple[int, int] = axis,
         keepdim: bool = False,
         name: str | None = None,
+        out: Tensor | None = None,
     ) -> Tensor:
         """
         Calculate the p-order matrix norm for certain  dimension of Tensor `input`.
@@ -1142,9 +1201,13 @@ def matrix_norm(
 
     if isinstance(axis, list) and len(axis) == 2:
         if p == "fro":
-            return frobenius_norm(x, dim=axis, keepdim=keepdim, name=name)
+            return frobenius_norm(
+                x, dim=axis, keepdim=keepdim, name=name, out_tensor=out
+            )
         elif p == "nuc":
-            return nuclear_norm(x, axis=axis, keepdim=keepdim, name=name)
+            return nuclear_norm(
+                x, axis=axis, keepdim=keepdim, name=name, out_tensor=out
+            )
         elif (
             p == np.inf
             or p == -np.inf
@@ -1154,7 +1217,12 @@ def matrix_norm(
             or p == -2
         ):
             return p_matrix_norm(
-                x, porder=p, axis=axis, keepdim=keepdim, name=name
+                x,
+                porder=p,
+                axis=axis,
+                keepdim=keepdim,
+                name=name,
+                out_tensor=out,
             )
         else:
             raise ValueError(
@@ -1173,6 +1241,8 @@ def norm(
     p: float | _POrder | None = None,
     axis: int | list[int] | tuple[int, int] | None = None,
     keepdim: bool = False,
+    out: Tensor | None = None,
+    dtype: DTypeLike | None = None,
     name: str | None = None,
 ) -> Tensor:
     """

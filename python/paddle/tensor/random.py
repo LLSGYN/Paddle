@@ -449,6 +449,8 @@ def multinomial(
     num_samples: int = 1,
     replacement: bool = False,
     name: str | None = None,
+    *,
+    out: Tensor | None = None,
 ) -> Tensor:
     """
     Returns a Tensor filled with random values sampled from a Multinomial
@@ -470,6 +472,7 @@ def multinomial(
         name(str|None, optional): The default value is None. Normally there is no
             need for user to set this property. For more information, please
             refer to :ref:`api_guide_Name`.
+        out (Tensor|None, optional): The output Tensor. If set, the result will be stored in this Tensor. Default is None.
     Returns:
         Tensor, A Tensor filled with sampled category index after ``num_samples`` times samples.
 
@@ -512,7 +515,7 @@ def multinomial(
     """
 
     if in_dynamic_or_pir_mode():
-        return _C_ops.multinomial(x, num_samples, replacement)
+        return _C_ops.multinomial(x, num_samples, replacement, out=out)
     else:
         check_variable_and_dtype(
             x, "x", ["uint16", "float16", "float32", "float64"], "multinomial"
@@ -1060,6 +1063,23 @@ def randn_like(
     shape = paddle.shape(x)
 
     return standard_normal(shape, dtype, name)
+
+
+def rand_like(
+    input,
+    name: str | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    device,
+    requires_grad: bool | None,
+):
+    """
+    blah
+    """
+    tensor = paddle.rand(input.shape, dtype=dtype)
+    if requires_grad:
+        tensor.stop_gradient = False
+    return tensor
 
 
 def normal(
